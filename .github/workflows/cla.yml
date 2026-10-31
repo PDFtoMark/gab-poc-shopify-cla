@@ -63,5 +63,7 @@ jobs:
           fi
 
           echo "CLA: every attributed author is on the signed list -> removing cla-needed"
-          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels/cla-needed" \
-            >/dev/null 2>&1 || true
+          set +e
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels/cla-needed" > del.out 2>&1
+          echo "delete exit=$? out=$(cat del.out)"
+          set -e
