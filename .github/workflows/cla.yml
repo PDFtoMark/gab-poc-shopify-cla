@@ -1,0 +1,67 @@
+name: Contributor License Agreement (CLA) - PoC replica
+
+# Faithful reproduction of Shopify/task-list-checker .github/workflows/cla.yml
+# (same triggers, same job-level `if:`), with the third-party action step
+# replaced by an inline replica of the exact decision logic performed by
+# Shopify/shopify-cla-action@v1 (lib/src/services/GithubService.ts +
+# AuthorClassificationService.ts): read the GitHub-attributed author login of
+# every PR commit and accept the PR when every login is on the signed list.
+# The real CLA service call is simulated with a fixed signed-user list.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  cla:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event.issue.pull_request 
+        && !github.event.issue.pull_request.merged_at
+        && contains(github.event.comment.body, 'signed')
+      ) 
+      || (github.event.pull_request && !github.event.pull_request.merged)
+    steps:
+      - name: Replica of Shopify/shopify-cla-action@v1 CLA classification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SIGNED_USERS: "lazyhacker6"
+        run: |
+          set -euo pipefail
+
+          # Same API call as GithubService.getPullRequestsInfo():
+          # GET /repos/{owner}/{repo}/pulls/{pull_number}/commits
+          authors=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/commits" --paginate \
+            --jq '.[].author.login // empty' | sort -u | paste -sd, -)
+          echo "Logins GitHub attributes to the PR commits: ${authors:-<none>}"
+
+          missing=""
+          IFS=',' read -ra list <<< "$authors"
+          for a in "${list[@]}"; do
+            if [ -z "$a" ]; then
+              missing="${missing}unknown-email "
+              continue
+            fi
+            case ",${SIGNED_USERS}," in
+              *",${a},"*) : ;;
+              *) missing="${missing}@${a} " ;;
+            esac
+          done
+
+          if [ -n "$missing" ]; then
+            echo "CLA: not signed by: ${missing}"
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels" \
+              -f "labels[]=cla-needed" >/dev/null || true
+            exit 1
+          fi
+
+          echo "CLA: every attributed author is on the signed list -> removing cla-needed"
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels/cla-needed" \
+            >/dev/null 2>&1 || true
